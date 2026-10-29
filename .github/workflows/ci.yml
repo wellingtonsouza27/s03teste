@@ -10,6 +10,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   PROJECT: src/PokemonRecommender/PokemonRecommender.csproj
   DOTNET_NOLOGO: true
@@ -78,41 +81,14 @@ jobs:
           npm install -g newman newman-reporter-htmlextra
           newman run tests/postman/recomendacao-de-cartas.postman_collection.json \
             --env-var base_url=http://localhost:5242 \
-            -r cli,htmlextra,json \
-            --reporter-htmlextra-export newman-report/report.html \
-            --reporter-json-export newman-report/report.json
+            -r cli,htmlextra \
+            --reporter-htmlextra-export site/index.html
 
-      - name: Resumo na página da execução
-        if: always() && hashFiles('newman-report/report.json') != ''
-        run: |
-          node <<'EOF'
-          const fs = require("fs");
-          const run = JSON.parse(fs.readFileSync("newman-report/report.json", "utf8")).run;
-          const rows = run.executions.map(e => {
-            const a = e.assertions || [];
-            const bad = a.filter(x => x.error).length;
-            return `| ${bad === 0 ? "✅" : "❌"} | ${e.item.name} | ${e.response ? e.response.code : "-"} | ${a.length - bad}/${a.length} |`;
-          });
-          const s = run.stats;
-          const md = [
-            "## Testes de integração (Newman)",
-            "",
-            `Requests: ${s.requests.total} · Asserções: ${s.assertions.total - s.assertions.failed}/${s.assertions.total} passaram`,
-            "",
-            "| | Request | Status | Asserções |",
-            "|---|---|---|---|",
-            ...rows,
-            ""
-          ].join("\n");
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
-          EOF
-
-      - name: Anexar relatório do Newman
-        if: always() && hashFiles('newman-report/report.html') != ''
-        uses: actions/upload-artifact@v4
+      - name: Preparar relatório para o Pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: newman-report
-          path: newman-report/
+          path: site
 
       - name: Anexar log da API se falhar
         if: failure()
@@ -120,3 +96,19 @@ jobs:
         with:
           name: api-log
           path: api.log
+
+  deploy-report:
+    name: Publicar relatório no Pages
+    runs-on: ubuntu-latest
+    needs: integration
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar
+        id: deployment
+        uses: actions/deploy-pages@v4
